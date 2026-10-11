@@ -90,12 +90,17 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // API: List ROMs
+  // API: List ROMs (sort tetris.gb first for tournament fork)
   if (pathname === '/api/roms' && (req.method === 'GET' || req.method === 'HEAD')) {
     try {
       const files = fs.readdirSync(ROMS_DIR).filter(f => {
         const ext = path.extname(f).toLowerCase();
         return ext === '.gb' || ext === '.gbc';
+      }).sort((a, b) => {
+        const aTetris = a.toLowerCase().includes('tetris') ? 0 : 1;
+        const bTetris = b.toLowerCase().includes('tetris') ? 0 : 1;
+        if (aTetris !== bTetris) return aTetris - bTetris;
+        return a.localeCompare(b);
       });
       const data = JSON.stringify(files);
       res.writeHead(200, {

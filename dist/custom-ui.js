@@ -62,7 +62,7 @@
   }
 
   let currentRoom = initialRoom;
-  let currentRomName = localStorage.getItem('gb_last_rom_name') || null;
+  let currentRomName = localStorage.getItem('gb_tourney_last_rom') || 'tetris.gb';
   let isGameInitialized = false;
 
   // Party & Link-Cable State
@@ -132,7 +132,7 @@
   }
 
   // --- IndexedDB Persistence for active ROM bytes ---
-  const DB_NAME = 'gb_session_persistence';
+  const DB_NAME = 'gb_tournament_persistence_v2';
   const DB_VERSION = 1;
 
   function openPersistenceDb() {
@@ -152,7 +152,7 @@
   async function saveSessionRom(name, arrayBuffer) {
     try {
       currentRomName = name;
-      localStorage.setItem('gb_last_rom_name', name);
+      localStorage.setItem('gb_tourney_last_rom', name);
       const db = await openPersistenceDb();
       const tx = db.transaction('session', 'readwrite');
       tx.objectStore('session').put({ name, buffer: arrayBuffer, timestamp: Date.now() }, 'active_rom');
@@ -181,7 +181,7 @@
   async function clearSessionRom() {
     try {
       currentRomName = null;
-      localStorage.removeItem('gb_last_rom_name');
+      localStorage.removeItem('gb_tourney_last_rom');
       const db = await openPersistenceDb();
       const tx = db.transaction('session', 'readwrite');
       tx.objectStore('session').delete('active_rom');
