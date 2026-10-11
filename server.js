@@ -403,7 +403,7 @@ function createDefaultTournamentState() {
   return {
     id: 't_' + Date.now().toString(36),
     status: 'lobby', // 'lobby' | 'active' | 'completed'
-    mode: 'builtin', // 'builtin' (Integriertes DMG Tetris) | 'emulator' (tetris.gb via Link-Kabel)
+    mode: 'emulator', // 'emulator' (Echtes Game Boy tetris.gb via Link-Kabel + WASM-CPU) | 'builtin' (Integriertes DMG Tetris)
     fillMode: 'odd_plus_one', // 'odd_plus_one' (Ungerade Anzahl mit +1 CPU auffüllen) | 'bracket_full' (Voller 4er/8er Baum mit CPUs)
     cpuDifficulty: 'normal', // 'easy' | 'normal' | 'hard'
     bestOf: 3, // 1 oder 3 (Best-of-3 = 2 Herzen zum Matchsieg wie beim Original Game Boy Tetris)

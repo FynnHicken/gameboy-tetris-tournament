@@ -84,7 +84,7 @@
     players: [],
     tournament: {
       status: 'lobby',
-      mode: 'builtin',
+      mode: 'emulator',
       fillMode: 'odd_plus_one',
       cpuDifficulty: 'normal',
       bestOf: 3,
@@ -545,19 +545,47 @@
       } else if (e.data.type === 'cpuBotStatus') {
         isCpuBotLinkActive = !!e.data.active;
         updateLinkCableUI();
+        renderTournamentPanel();
+      } else if (e.data.type === 'tetrisRoundResult') {
+        const myMatch = getMyActiveTournamentMatch();
+        if (e.data.result === 'win') {
+          playRetroBlip(880, 'triangle', 0.14);
+          showToast('🏆 Runden-Sieg in tetris.gb! (+1 ♥)');
+          if (myMatch && chatWs && chatWs.readyState === WebSocket.OPEN) {
+            chatWs.send(JSON.stringify({
+              type: 'TOURNAMENT_REPORT_WIN',
+              matchId: myMatch.id,
+              winnerId: playerId
+            }));
+          }
+        } else if (e.data.result === 'lose') {
+          playRetroBlip(300, 'sawtooth', 0.14);
+          showToast('💥 Runde verloren in tetris.gb!');
+          if (myMatch && chatWs && chatWs.readyState === WebSocket.OPEN) {
+            const opp = (myMatch.p1 && myMatch.p1.id === playerId) ? myMatch.p2 : myMatch.p1;
+            if (opp && opp.isCpu) {
+              chatWs.send(JSON.stringify({
+                type: 'TOURNAMENT_REPORT_WIN',
+                matchId: myMatch.id,
+                winnerId: opp.id
+              }));
+            }
+          }
+        }
       }
     });
     return true;
   }
 
-  function setWorkletCpuBotMode(enabled, difficulty = 'normal') {
+  function setWorkletCpuBotMode(enabled, difficulty = 'normal', autoStart2P = true) {
     isCpuBotLinkActive = !!enabled;
     if (window.__gbWorkletNode && window.__gbWorkletNode.port) {
       ensureWorkletSerialHook();
       window.__gbWorkletNode.port.postMessage({
         type: 'setCpuBot',
         enabled: !!enabled,
-        difficulty
+        difficulty,
+        autoStart2P
       });
     }
     updateLinkCableUI();
@@ -862,10 +890,35 @@
     };
   }
 
-  function launchPracticeVsCpu() {
+  async function ensureTetrisRomRunningInEmulator() {
+    if (window.gbTetrisArena && window.gbTetrisArena.isVisible) {
+      window.gbTetrisArena.hide();
+    }
+    if (!isGameInitialized || currentRomName !== 'tetris.gb' || !window.__gbWorkletNode) {
+      await loadServerRomByName('tetris.gb', false);
+      for (let i = 0; i < 40; i++) {
+        if (window.__gbWorkletNode && window.__gbWorkletNode.port) break;
+        await new Promise(r => setTimeout(r, 50));
+      }
+    }
+    showGameBoyScreen();
+  }
+
+  async function launchPracticeVsCpu() {
     wireArenaCallbacks();
-    if (!window.gbTetrisArena) return;
+    const mode = (partyState.tournament && partyState.tournament.mode) || 'emulator';
     const diff = (partyState.tournament && partyState.tournament.cpuDifficulty) || 'normal';
+
+    if (mode === 'emulator') {
+      playRetroBlip(660, 'square', 0.08);
+      showToast('🤖 Starte echtes Game Boy tetris.gb (2-Player Link-Kabel vs CPU)...');
+      await ensureTetrisRomRunningInEmulator();
+      setWorkletCpuBotMode(true, diff, true);
+      renderTournamentPanel();
+      return;
+    }
+
+    if (!window.gbTetrisArena) return;
     const practiceMatch = {
       id: 'solo_practice',
       roundName: 'TRAINING',
@@ -883,7 +936,7 @@
     showToast('🕹️ Solo-Training gegen 🤖 R.O.B. 89 gestartet!');
   }
 
-  function syncTournamentMatchExecution(autoLaunch = false) {
+  async function syncTournamentMatchExecution(autoLaunch = false) {
     wireArenaCallbacks();
     const t = partyState.tournament;
     if (!t || t.status !== 'active') {
@@ -914,16 +967,20 @@
           showToast(`⚔️ ${myMatch.roundName}: Du spielst gegen ${opponent.avatar} ${opponent.name}!`);
         }
       }
-    } else if (t.mode === 'emulator') {
+    } else {
       if (window.gbTetrisArena && window.gbTetrisArena.isVisible) {
         window.gbTetrisArena.hide();
       }
+      const isNewMatch = (autoLaunch || lastAutoStartedMatchKey !== matchKey);
+      if (isNewMatch) {
+        lastAutoStartedMatchKey = matchKey;
+        await ensureTetrisRomRunningInEmulator();
+      }
       if (opponent && opponent.isCpu) {
         // Activate Dual-WASM Link-Cable CPU Bot inside AudioWorklet!
-        setWorkletCpuBotMode(true, opponent.difficulty || t.cpuDifficulty || 'normal');
-        if (lastAutoStartedMatchKey !== matchKey) {
-          lastAutoStartedMatchKey = matchKey;
-          showToast(`🤖 Emulator Link-Kabel mit ${opponent.name} gekoppelt!`);
+        setWorkletCpuBotMode(true, opponent.difficulty || t.cpuDifficulty || 'normal', isNewMatch);
+        if (isNewMatch) {
+          showToast(`🤖 Echtes tetris.gb Link-Kabel mit ${opponent.name} gekoppelt!`);
         }
       } else {
         // Connect to isolated per-match Link-Cable WebSocket channel!
@@ -942,7 +999,7 @@
 
     const t = partyState.tournament || {
       status: 'lobby',
-      mode: 'builtin',
+      mode: 'emulator',
       fillMode: 'odd_plus_one',
       cpuDifficulty: 'normal',
       bestOf: 3,
@@ -1046,6 +1103,20 @@
           ${oddWarningText}
         </div>
 
+        ${isCpuBotLinkActive ? `
+          <div class="emu-cpu-preview-row" style="margin-bottom:10px;">
+            <canvas id="emulator-cpu-mini-canvas" width="160" height="144" class="emu-cpu-mini-lcd"></canvas>
+            <div style="font-size:11.5px; color:#cbd5e1; line-height:1.4; flex:1;">
+              <strong>🤖 Echtes tetris.gb Training aktiv (Dual-WASM Link-Kabel)</strong><br>
+              Links läuft dein originaler Game Boy mit <code>tetris.gb</code>, hier siehst du den 2. Game Boy der CPU live!
+              <div style="margin-top:6px; display:flex; gap:6px;">
+                <button type="button" class="retro-btn" id="btn-lobby-restart-2p" style="padding:4px 9px; font-size:10.5px;">⚡ 2P-Match neu starten</button>
+                <button type="button" class="retro-btn retro-btn-secondary" id="btn-lobby-stop-cpu" style="padding:4px 9px; font-size:10.5px;">✕ CPU trennen</button>
+              </div>
+            </div>
+          </div>
+        ` : ''}
+
         <!-- 8-Slot Participant Preview Grid -->
         <div class="tourney-slots-grid">
           ${slotsHtml}
@@ -1056,8 +1127,8 @@
           <div class="tourney-config-item">
             <label>🕹️ Spiel-Engine:</label>
             <select id="tourney-mode-select" class="tourney-select">
-              <option value="builtin" ${t.mode === 'builtin' ? 'selected' : ''}>🕹️ Integriertes DMG Tetris (Ohne ROM + Auto-Sieger)</option>
-              <option value="emulator" ${t.mode === 'emulator' ? 'selected' : ''}>🔗 Emulator Link-Kabel (tetris.gb + WASM-Bot)</option>
+              <option value="emulator" ${t.mode !== 'builtin' ? 'selected' : ''}>🔗 Echtes Game Boy tetris.gb (ROM + Link-Kabel & WASM-CPU)</option>
+              <option value="builtin" ${t.mode === 'builtin' ? 'selected' : ''}>🕹️ Integriertes HTML5-Tetris (Ohne ROM)</option>
             </select>
           </div>
 
@@ -1099,7 +1170,7 @@
               </button>
             ` : ''}
             <button type="button" class="retro-btn retro-btn-secondary" id="btn-tourney-practice" style="padding:7px 11px; font-size:11.5px; border-color:#38bdf8; color:#7dd3fc;">
-              🎮 Training vs CPU
+              🎮 Training vs CPU (tetris.gb)
             </button>
           </div>
 
@@ -1111,7 +1182,7 @@
 
       const sendConfig = () => {
         if (!chatWs || chatWs.readyState !== WebSocket.OPEN) return;
-        const modeVal = document.getElementById('tourney-mode-select')?.value || 'builtin';
+        const modeVal = document.getElementById('tourney-mode-select')?.value || 'emulator';
         const fillVal = document.getElementById('tourney-fill-select')?.value || 'odd_plus_one';
         const diffVal = document.getElementById('tourney-diff-select')?.value || 'normal';
         const bestOfVal = parseInt(document.getElementById('tourney-bestof-select')?.value || '3', 10);
@@ -1128,6 +1199,25 @@
         const el = document.getElementById(id);
         if (el) el.onchange = sendConfig;
       });
+
+      const restart2pBtn = document.getElementById('btn-lobby-restart-2p');
+      if (restart2pBtn) {
+        restart2pBtn.onclick = () => {
+          if (window.__gbWorkletNode && window.__gbWorkletNode.port) {
+            window.__gbWorkletNode.port.postMessage({ type: 'start2PMatch' });
+            showToast('⚡ 2-Player Match in tetris.gb wird gestartet...');
+          }
+        };
+      }
+
+      const stopCpuBtn = document.getElementById('btn-lobby-stop-cpu');
+      if (stopCpuBtn) {
+        stopCpuBtn.onclick = () => {
+          setWorkletCpuBotMode(false);
+          renderTournamentPanel();
+          showToast('🔌 CPU-Bot getrennt');
+        };
+      }
 
       const addCpuBtn = document.getElementById('btn-tourney-add-cpu');
       if (addCpuBtn) {
@@ -1215,11 +1305,14 @@
                   🕹️ Auf Game Boy spielen
                 </button>
               ` : `
-                <button type="button" class="retro-btn" id="btn-claim-emu-win" style="padding:6px 10px; font-size:11.5px; background:#16a34a;" title="Punkt/Herz für dich melden">
-                  🏆 +1 Herz (Ich)
+                <button type="button" class="retro-btn" id="btn-autostart-emu-2p" style="padding:6px 10px; font-size:11.5px; background:#2563eb;" title="Startet automatisch 2 PLAYER in tetris.gb">
+                  ⚡ 2P-Match starten
                 </button>
-                <button type="button" class="retro-btn retro-btn-secondary" id="btn-claim-emu-loss" style="padding:6px 10px; font-size:11.5px;" title="Punkt/Herz für Gegner melden">
-                  💥 +1 Herz (${escapeHtml(oppObj.name.slice(0, 10))})
+                <button type="button" class="retro-btn" id="btn-claim-emu-win" style="padding:6px 10px; font-size:11.5px; background:#16a34a;" title="Punkt/Herz manuell für dich melden">
+                  🏆 +1 ♥ (Ich)
+                </button>
+                <button type="button" class="retro-btn retro-btn-secondary" id="btn-claim-emu-loss" style="padding:6px 10px; font-size:11.5px;" title="Punkt/Herz manuell für Gegner melden">
+                  💥 +1 ♥ (${escapeHtml(oppObj.name.slice(0, 10))})
                 </button>
               `}
             </div>
@@ -1229,8 +1322,8 @@
             <div class="emu-cpu-preview-row">
               <canvas id="emulator-cpu-mini-canvas" width="160" height="144" class="emu-cpu-mini-lcd"></canvas>
               <div style="font-size:11.5px; color:#cbd5e1; line-height:1.4;">
-                <strong>🤖 Dual-WASM CPU-Game-Boy aktiv (${escapeHtml(oppObj.name)})</strong><br>
-                Dieser zweite Game Boy läuft im Hintergrund und ist per virtuellem Link-Kabel direkt mit deinem Emulator verbunden!
+                <strong>🤖 Echtes tetris.gb CPU-Game-Boy aktiv (${escapeHtml(oppObj.name)})</strong><br>
+                Spielt echtes <code>tetris.gb</code> im 2. WASM-Emulator (inkl. Garbage-Lines & automatischer Runden-Siegerkennung)!
               </div>
             </div>
           ` : ''}
@@ -1299,7 +1392,7 @@
       </div>
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; padding-top:10px; border-top:1px solid #283040;">
         <span style="font-size:11px; color:#94a3b8;">
-          Modus: <strong>${t.mode === 'builtin' ? '🕹️ Integriertes DMG Tetris' : '🔗 Emulator Link-Kabel'}</strong> • ${t.participants ? t.participants.length : 0} Teilnehmer
+          Modus: <strong>${t.mode === 'builtin' ? '🕹️ Integriertes HTML5-Tetris' : '🔗 Echtes Game Boy tetris.gb (Link-Kabel)'}</strong> • ${t.participants ? t.participants.length : 0} Teilnehmer
         </span>
         <button type="button" class="retro-btn retro-btn-secondary" id="btn-tourney-reset-bottom" style="padding:5px 10px; font-size:11px;">
           🔄 Turnier neu starten
@@ -1313,6 +1406,17 @@
         wireArenaCallbacks();
         if (window.gbTetrisArena) {
           window.gbTetrisArena.startMatch(myMatch, playerId);
+        }
+      };
+    }
+
+    const autoStart2pBtn = document.getElementById('btn-autostart-emu-2p');
+    if (autoStart2pBtn && myMatch) {
+      autoStart2pBtn.onclick = async () => {
+        await ensureTetrisRomRunningInEmulator();
+        if (window.__gbWorkletNode && window.__gbWorkletNode.port) {
+          window.__gbWorkletNode.port.postMessage({ type: 'start2PMatch' });
+          showToast('⚡ 2-Player Match in tetris.gb wird gestartet!');
         }
       };
     }
