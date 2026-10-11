@@ -70,8 +70,10 @@
   let chatReconnectTimer = null;
   let linkWs = null;
   let linkReconnectTimer = null;
-  let linkConnectedRoom = null;
+  let linkConnectedChannel = null;
+  let activeLinkMatchId = null;
   let isLinkPaired = false;
+  let isCpuBotLinkActive = false;
   let linkPeerCount = 0;
   let workletSerialHooked = false;
 
@@ -79,8 +81,22 @@
     isHost: false,
     hostId: null,
     selectedRom: null,
-    players: []
+    players: [],
+    tournament: {
+      status: 'lobby',
+      mode: 'builtin',
+      fillMode: 'odd_plus_one',
+      cpuDifficulty: 'normal',
+      bestOf: 3,
+      customCpus: [],
+      participants: [],
+      currentRound: 0,
+      rounds: [],
+      champion: null
+    }
   };
+
+  let lastAutoStartedMatchKey = null;
 
   // Sound generator using Web Audio API (Retro 8-bit Synth)
   function playRetroBlip(freq = 440, type = 'square', duration = 0.08) {
@@ -484,36 +500,82 @@
           };
         }
       } else {
-        label.innerHTML = `Kein Spiel geladen – wähle oben eine ROM aus!`;
+        label.innerHTML = `Kein Spiel geladen – wähle oben eine ROM oder starte das integrierte Turnier-Tetris!`;
       }
     }
   }
 
-  // --- Direct Auto-Link-Cable Engine (connects window.__gbWorkletNode.port to /ws?room=xxxx&direct=1) ---
+  // --- Direct Auto-Link-Cable Engine + Dual-WASM CPU Bot Renderer ---
+  function renderBotFrameToMiniCanvas(uint16Buf) {
+    const canvas = document.getElementById('emulator-cpu-mini-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const img = ctx.createImageData(160, 144);
+    const data = img.data;
+    for (let i = 0; i < uint16Buf.length; i++) {
+      const val = uint16Buf[i];
+      const idx = i * 4;
+      const r = val & 31;
+      const g = (val >> 5) & 31;
+      const b = (val >> 10) & 31;
+      data[idx] = (r << 3) | (r >> 2);
+      data[idx + 1] = (g << 3) | (g >> 2);
+      data[idx + 2] = (b << 3) | (b >> 2);
+      data[idx + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
   function ensureWorkletSerialHook() {
     if (workletSerialHooked) return true;
     if (!window.__gbWorkletNode || !window.__gbWorkletNode.port) return false;
 
     workletSerialHooked = true;
     window.__gbWorkletNode.port.addEventListener('message', (e) => {
-      if (e.data && e.data.type === 'serial' && e.data.buffer) {
-        if (linkWs && linkWs.readyState === WebSocket.OPEN && isLinkPaired) {
+      if (!e.data) return;
+      if (e.data.type === 'serial' && e.data.buffer) {
+        if (!isCpuBotLinkActive && linkWs && linkWs.readyState === WebSocket.OPEN && isLinkPaired) {
           try {
             linkWs.send(e.data.buffer);
           } catch (err) {}
         }
+      } else if (e.data.type === 'botFrame' && e.data.buffer) {
+        renderBotFrameToMiniCanvas(e.data.buffer);
+      } else if (e.data.type === 'cpuBotStatus') {
+        isCpuBotLinkActive = !!e.data.active;
+        updateLinkCableUI();
       }
     });
     return true;
   }
 
-  function connectDirectLinkCable(forceReconnect = false) {
+  function setWorkletCpuBotMode(enabled, difficulty = 'normal') {
+    isCpuBotLinkActive = !!enabled;
+    if (window.__gbWorkletNode && window.__gbWorkletNode.port) {
+      ensureWorkletSerialHook();
+      window.__gbWorkletNode.port.postMessage({
+        type: 'setCpuBot',
+        enabled: !!enabled,
+        difficulty
+      });
+    }
+    updateLinkCableUI();
+  }
+
+  function connectDirectLinkCable(forceReconnect = false, matchIdOverride = null) {
     if (!currentRoom) return;
     if (!window.__gbWorkletNode || !window.__gbWorkletNode.port) return;
 
     ensureWorkletSerialHook();
 
-    if (!forceReconnect && linkWs && (linkWs.readyState === WebSocket.OPEN || linkWs.readyState === WebSocket.CONNECTING) && linkConnectedRoom === currentRoom) {
+    if (matchIdOverride !== null) {
+      activeLinkMatchId = matchIdOverride;
+    }
+
+    const channelKey = activeLinkMatchId ? `${currentRoom}__${activeLinkMatchId}` : currentRoom;
+
+    if (!forceReconnect && linkWs && (linkWs.readyState === WebSocket.OPEN || linkWs.readyState === WebSocket.CONNECTING) && linkConnectedChannel === channelKey) {
       return;
     }
 
@@ -522,9 +584,10 @@
       linkWs = null;
     }
 
-    linkConnectedRoom = currentRoom;
+    linkConnectedChannel = channelKey;
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${proto}//${window.location.host}/ws?room=${encodeURIComponent(currentRoom)}&direct=1&playerId=${encodeURIComponent(playerId)}`;
+    const matchQuery = activeLinkMatchId ? `&matchId=${encodeURIComponent(activeLinkMatchId)}` : '';
+    const wsUrl = `${proto}//${window.location.host}/ws?room=${encodeURIComponent(currentRoom)}${matchQuery}&direct=1&playerId=${encodeURIComponent(playerId)}`;
 
     try {
       const ws = new WebSocket(wsUrl);
@@ -537,7 +600,7 @@
 
       ws.onmessage = (event) => {
         if (event.data instanceof ArrayBuffer) {
-          if (event.data.byteLength > 0 && window.__gbWorkletNode && window.__gbWorkletNode.port) {
+          if (!isCpuBotLinkActive && event.data.byteLength > 0 && window.__gbWorkletNode && window.__gbWorkletNode.port) {
             window.__gbWorkletNode.port.postMessage(
               { type: 'serial', buffer: new Uint8Array(event.data) },
               [event.data]
@@ -557,12 +620,12 @@
               if (!wasPaired) {
                 playRetroBlip(660, 'triangle', 0.08);
                 setTimeout(() => playRetroBlip(880, 'triangle', 0.12), 90);
-                showToast('🔗 Link-Kabel verbunden! (2/2 Spieler bereit)');
+                showToast(`🔗 Link-Kabel verbunden! (${activeLinkMatchId ? 'Turnier-Match' : '2/2 Spieler bereit'})`);
               }
             } else if (msg.type === 'LINK_WAITING') {
               isLinkPaired = false;
               linkPeerCount = msg.peers || 1;
-              if (window.__gbWorkletNode && window.__gbWorkletNode.port) {
+              if (!isCpuBotLinkActive && window.__gbWorkletNode && window.__gbWorkletNode.port) {
                 window.__gbWorkletNode.port.postMessage({ type: 'serialDisconnected' });
               }
               updateLinkCableUI();
@@ -574,12 +637,12 @@
       ws.onclose = () => {
         if (linkWs === ws) {
           isLinkPaired = false;
-          if (window.__gbWorkletNode && window.__gbWorkletNode.port) {
+          if (!isCpuBotLinkActive && window.__gbWorkletNode && window.__gbWorkletNode.port) {
             try { window.__gbWorkletNode.port.postMessage({ type: 'serialDisconnected' }); } catch (e) {}
           }
           updateLinkCableUI();
           clearTimeout(linkReconnectTimer);
-          linkReconnectTimer = setTimeout(() => connectDirectLinkCable(true), 2500);
+          linkReconnectTimer = setTimeout(() => connectDirectLinkCable(true, activeLinkMatchId), 2500);
         }
       };
     } catch (e) {}
@@ -593,21 +656,26 @@
 
     const emuReady = !!(window.__gbWorkletNode && window.__gbWorkletNode.port);
 
-    if (isLinkPaired && emuReady) {
+    if (isCpuBotLinkActive && emuReady) {
       if (topDot) topDot.className = 'status-dot connected';
-      if (topText) topText.textContent = 'Link-Kabel aktiv 🐣🐔';
+      if (topText) topText.textContent = 'Link-Kabel: 🤖 CPU-Bot';
       if (banner) banner.className = 'link-cable-banner paired';
-      if (bannerText) bannerText.innerHTML = '🟢 <strong>Link-Kabel verbunden!</strong> (Beide Game Boys gekoppelt)';
+      if (bannerText) bannerText.innerHTML = '🤖 <strong>Dual-WASM Link-Kabel aktiv!</strong> (Dein Game Boy ist direkt mit dem CPU-Gegner gekoppelt)';
+    } else if (isLinkPaired && emuReady) {
+      if (topDot) topDot.className = 'status-dot connected';
+      if (topText) topText.textContent = activeLinkMatchId ? 'Turnier-Link aktiv ⚔️' : 'Link-Kabel aktiv 🐣🐔';
+      if (banner) banner.className = 'link-cable-banner paired';
+      if (bannerText) bannerText.innerHTML = `🟢 <strong>Link-Kabel verbunden!</strong> (${activeLinkMatchId ? 'Turnier-Match gekoppelt' : 'Beide Game Boys gekoppelt'})`;
     } else if (!emuReady) {
       if (topDot) topDot.className = 'status-dot waiting';
-      if (topText) topText.textContent = `Party: ${currentRoom} (Starte Emulator)`;
+      if (topText) topText.textContent = `Party: ${currentRoom} (Bereit)`;
       if (banner) banner.className = 'link-cable-banner waiting';
-      if (bannerText) bannerText.innerHTML = '🕹️ Klicke links auf <strong>▶ START (AUDIO)</strong>, um das Link-Kabel zu aktivieren';
+      if (bannerText) bannerText.innerHTML = '🕹️ Starte links den <strong>Game Boy</strong> oder direkt unten ein <strong>🏆 Tetris-Turnier</strong>!';
     } else {
       if (topDot) topDot.className = 'status-dot waiting';
       if (topText) topText.textContent = `Warte auf 2. Game Boy (${currentRoom})...`;
       if (banner) banner.className = 'link-cable-banner waiting';
-      if (bannerText) bannerText.innerHTML = `🔌 <strong>Link-Kabel bereit</strong> – Warte auf 2. Spieler in Raum <code>${escapeHtml(currentRoom)}</code>...`;
+      if (bannerText) bannerText.innerHTML = `🔌 <strong>Link-Kabel bereit</strong> – Warte auf Mitspieler in Raum <code>${escapeHtml(currentRoom)}</code>...`;
     }
   }
 
@@ -725,6 +793,594 @@
     });
   }
 
+  // ==========================================================================
+  // 🏆 8-PLAYER TETRIS TOURNAMENT & CPU AUTO-FILL UI CONTROLLER
+  // ==========================================================================
+  const PREVIEW_CPU_NAMES = [
+    { name: 'R.O.B. 89 (CPU)', avatar: '🤖', color: '#38bdf8' },
+    { name: 'DMG-01 Bot (CPU)', avatar: '👾', color: '#a855f7' },
+    { name: 'Tetromino Rex (CPU)', avatar: '🦖', color: '#f97316' },
+    { name: 'Alexey AI (CPU)', avatar: '🧠', color: '#ec4899' },
+    { name: 'Pixel Byte (CPU)', avatar: '⚡', color: '#eab308' },
+    { name: 'Link-Master (CPU)', avatar: '🔌', color: '#10b981' },
+    { name: 'Korobeiniki (CPU)', avatar: '🎵', color: '#f43f5e' }
+  ];
+
+  function getMyActiveTournamentMatch() {
+    const t = partyState.tournament;
+    if (!t || t.status !== 'active' || !Array.isArray(t.rounds)) return null;
+    const curRound = t.rounds[t.currentRound] || [];
+    return curRound.find(m =>
+      m.status === 'active' &&
+      ((m.p1 && m.p1.id === playerId) || (m.p2 && m.p2.id === playerId))
+    ) || null;
+  }
+
+  function wireArenaCallbacks() {
+    if (!window.gbTetrisArena || window.gbTetrisArena._callbacksWired) return;
+    window.gbTetrisArena._callbacksWired = true;
+
+    window.gbTetrisArena.onSendGarbage = ({ matchId, targetPlayerId, lines, holeCol }) => {
+      if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+        chatWs.send(JSON.stringify({
+          type: 'TOURNAMENT_GARBAGE_ATTACK',
+          matchId,
+          fromPlayerId: playerId,
+          targetPlayerId,
+          lines,
+          holeCol
+        }));
+      }
+    };
+
+    window.gbTetrisArena.onBroadcastBoard = (stateObj) => {
+      if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+        chatWs.send(JSON.stringify({
+          type: 'TOURNAMENT_BOARD_UPDATE',
+          ...stateObj
+        }));
+      }
+    };
+
+    window.gbTetrisArena.onReportRoundWin = ({ matchId, winnerId, score1, score2, lines1, lines2 }) => {
+      if (matchId === 'solo_practice') {
+        const won = (winnerId === playerId);
+        window.gbTetrisArena.onMatchFinished(won ? { id: playerId, name: playerName } : { id: 'cpu_practice', name: 'R.O.B. 89 (CPU)' });
+        return;
+      }
+      if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+        chatWs.send(JSON.stringify({
+          type: 'TOURNAMENT_REPORT_WIN',
+          matchId,
+          winnerId,
+          score1,
+          score2,
+          lines1,
+          lines2
+        }));
+      }
+    };
+  }
+
+  function launchPracticeVsCpu() {
+    wireArenaCallbacks();
+    if (!window.gbTetrisArena) return;
+    const diff = (partyState.tournament && partyState.tournament.cpuDifficulty) || 'normal';
+    const practiceMatch = {
+      id: 'solo_practice',
+      roundName: 'TRAINING',
+      bestOf: 1,
+      winsNeeded: 1,
+      wins1: 0,
+      wins2: 0,
+      status: 'active',
+      seed: Math.floor(100000 + Math.random() * 900000),
+      p1: { id: playerId, name: playerName, avatar: playerAvatar, color: playerColor, isCpu: false },
+      p2: { id: 'cpu_practice', name: 'R.O.B. 89 (CPU)', avatar: '🤖', color: '#38bdf8', isCpu: true, difficulty: diff }
+    };
+    window.gbTetrisArena.startMatch(practiceMatch, playerId);
+    playRetroBlip(660, 'square', 0.08);
+    showToast('🕹️ Solo-Training gegen 🤖 R.O.B. 89 gestartet!');
+  }
+
+  function syncTournamentMatchExecution(autoLaunch = false) {
+    wireArenaCallbacks();
+    const t = partyState.tournament;
+    if (!t || t.status !== 'active') {
+      if (activeLinkMatchId) {
+        activeLinkMatchId = null;
+        setWorkletCpuBotMode(false);
+        connectDirectLinkCable(true, '');
+      }
+      return;
+    }
+
+    const myMatch = getMyActiveTournamentMatch();
+    if (!myMatch) {
+      setWorkletCpuBotMode(false);
+      return;
+    }
+
+    const isP1 = (myMatch.p1 && myMatch.p1.id === playerId);
+    const opponent = isP1 ? myMatch.p2 : myMatch.p1;
+    const matchKey = `${t.id}_${myMatch.id}`;
+
+    if (t.mode === 'builtin') {
+      setWorkletCpuBotMode(false);
+      if (autoLaunch || lastAutoStartedMatchKey !== matchKey) {
+        lastAutoStartedMatchKey = matchKey;
+        if (window.gbTetrisArena) {
+          window.gbTetrisArena.startMatch(myMatch, playerId);
+          showToast(`⚔️ ${myMatch.roundName}: Du spielst gegen ${opponent.avatar} ${opponent.name}!`);
+        }
+      }
+    } else if (t.mode === 'emulator') {
+      if (window.gbTetrisArena && window.gbTetrisArena.isVisible) {
+        window.gbTetrisArena.hide();
+      }
+      if (opponent && opponent.isCpu) {
+        // Activate Dual-WASM Link-Cable CPU Bot inside AudioWorklet!
+        setWorkletCpuBotMode(true, opponent.difficulty || t.cpuDifficulty || 'normal');
+        if (lastAutoStartedMatchKey !== matchKey) {
+          lastAutoStartedMatchKey = matchKey;
+          showToast(`🤖 Emulator Link-Kabel mit ${opponent.name} gekoppelt!`);
+        }
+      } else {
+        // Connect to isolated per-match Link-Cable WebSocket channel!
+        setWorkletCpuBotMode(false);
+        if (activeLinkMatchId !== myMatch.id) {
+          connectDirectLinkCable(true, myMatch.id);
+        }
+      }
+    }
+  }
+
+  function renderTournamentPanel() {
+    const container = document.getElementById('tournament-panel-body');
+    const statusBadge = document.getElementById('tournament-status-badge');
+    if (!container) return;
+
+    const t = partyState.tournament || {
+      status: 'lobby',
+      mode: 'builtin',
+      fillMode: 'odd_plus_one',
+      cpuDifficulty: 'normal',
+      bestOf: 3,
+      customCpus: [],
+      participants: [],
+      currentRound: 0,
+      rounds: [],
+      champion: null
+    };
+
+    const humans = (partyState.players && partyState.players.length > 0)
+      ? partyState.players.slice(0, 8)
+      : [{ id: playerId, name: playerName, avatar: playerAvatar, color: playerColor, isCpu: false }];
+
+    if (statusBadge) {
+      if (t.status === 'active') {
+        const curR = (t.rounds && t.rounds[t.currentRound]) || [];
+        const rTitle = (curR[0] && curR[0].roundName) || `Runde ${t.currentRound + 1}`;
+        statusBadge.textContent = `⚔️ ${rTitle} läuft`;
+        statusBadge.className = 'couch-badge tournament-live-badge';
+      } else if (t.status === 'completed' && t.champion) {
+        statusBadge.textContent = `🏆 Sieger: ${t.champion.name}`;
+        statusBadge.className = 'couch-badge tournament-champ-badge';
+      } else {
+        statusBadge.textContent = `Max. 8 Spieler + 🤖 Auto-CPU`;
+        statusBadge.className = 'couch-badge';
+      }
+    }
+
+    // --- 1. LOBBY / SETUP VIEW ---
+    if (t.status === 'lobby') {
+      const customCpus = (t.customCpus || []).slice(0, Math.max(0, 8 - humans.length));
+      const baseList = [
+        ...humans.map(h => ({ ...h, isCpu: false })),
+        ...customCpus.map(c => ({ ...c, isCpu: true, isCustom: true }))
+      ];
+
+      let targetCount = baseList.length;
+      if (t.fillMode === 'bracket_full') {
+        if (targetCount <= 2) targetCount = (targetCount === 1 ? 4 : 2);
+        else if (targetCount <= 4) targetCount = 4;
+        else targetCount = 8;
+      } else {
+        if (targetCount < 2) targetCount = 2;
+        else if (targetCount % 2 === 1) targetCount += 1;
+      }
+      targetCount = Math.min(8, targetCount);
+
+      const previewSlots = [];
+      let autoCpuCounter = 0;
+      for (let i = 0; i < 8; i++) {
+        if (i < baseList.length) {
+          previewSlots.push({ slot: i + 1, type: baseList[i].isCpu ? 'custom_cpu' : 'human', data: baseList[i] });
+        } else if (i < targetCount) {
+          const botPreset = PREVIEW_CPU_NAMES[(customCpus.length + autoCpuCounter) % PREVIEW_CPU_NAMES.length];
+          autoCpuCounter++;
+          previewSlots.push({
+            slot: i + 1,
+            type: 'auto_cpu',
+            data: { name: botPreset.name, avatar: botPreset.avatar, color: botPreset.color, isCpu: true }
+          });
+        } else {
+          previewSlots.push({ slot: i + 1, type: 'empty', data: null });
+        }
+      }
+
+      const slotsHtml = previewSlots.map(s => {
+        if (s.type === 'human') {
+          return `
+            <div class="tourney-slot-chip human">
+              <span class="slot-num">#${s.slot}</span>
+              <span class="slot-ava">${escapeHtml(s.data.avatar || '🎮')}</span>
+              <span class="slot-name">${escapeHtml(s.data.name)}</span>
+            </div>
+          `;
+        }
+        if (s.type === 'custom_cpu' || s.type === 'auto_cpu') {
+          return `
+            <div class="tourney-slot-chip cpu ${s.type === 'auto_cpu' ? 'auto-fill' : ''}">
+              <span class="slot-num">#${s.slot}</span>
+              <span class="slot-ava">${escapeHtml(s.data.avatar || '🤖')}</span>
+              <span class="slot-name">${escapeHtml(s.data.name)}</span>
+              <span class="slot-tag">${s.type === 'auto_cpu' ? 'AUTO-CPU' : 'BOT'}</span>
+            </div>
+          `;
+        }
+        return `
+          <div class="tourney-slot-chip empty">
+            <span class="slot-num">#${s.slot}</span>
+            <span class="slot-name">Freier Platz</span>
+          </div>
+        `;
+      }).join('');
+
+      const oddWarningText = (baseList.length % 2 === 1)
+        ? `⚡ <strong>Ungerade Teilnehmerzahl (${baseList.length}):</strong> Wird beim Start automatisch mit <strong>+${targetCount - baseList.length} CPU-Gegner</strong> auf <strong>${targetCount} Spieler</strong> aufgefüllt!`
+        : `✅ <strong>${targetCount} Teilnehmer bereit</strong> (${humans.length} Mensch${humans.length === 1 ? '' : 'en'}, ${targetCount - humans.length} CPU${targetCount - humans.length === 1 ? '' : 's'}) – ${targetCount / 2} Paarungen in Runde 1.`;
+
+      container.innerHTML = `
+        <div class="tourney-info-banner">
+          ${oddWarningText}
+        </div>
+
+        <!-- 8-Slot Participant Preview Grid -->
+        <div class="tourney-slots-grid">
+          ${slotsHtml}
+        </div>
+
+        <!-- Tournament Settings Grid -->
+        <div class="tourney-config-grid">
+          <div class="tourney-config-item">
+            <label>🕹️ Spiel-Engine:</label>
+            <select id="tourney-mode-select" class="tourney-select">
+              <option value="builtin" ${t.mode === 'builtin' ? 'selected' : ''}>🕹️ Integriertes DMG Tetris (Ohne ROM + Auto-Sieger)</option>
+              <option value="emulator" ${t.mode === 'emulator' ? 'selected' : ''}>🔗 Emulator Link-Kabel (tetris.gb + WASM-Bot)</option>
+            </select>
+          </div>
+
+          <div class="tourney-config-item">
+            <label>🤖 CPU-Auffüllung:</label>
+            <select id="tourney-fill-select" class="tourney-select">
+              <option value="odd_plus_one" ${t.fillMode === 'odd_plus_one' ? 'selected' : ''}>⚖️ Ungerade Anzahl mit +1 CPU auffüllen</option>
+              <option value="bracket_full" ${t.fillMode === 'bracket_full' ? 'selected' : ''}>🏆 Auf vollen 4er / 8er Baum mit CPUs auffüllen</option>
+            </select>
+          </div>
+
+          <div class="tourney-config-item">
+            <label>🧠 CPU-Stärke:</label>
+            <select id="tourney-diff-select" class="tourney-select">
+              <option value="easy" ${t.cpuDifficulty === 'easy' ? 'selected' : ''}>🟢 Leicht (Einsteiger)</option>
+              <option value="normal" ${t.cpuDifficulty === 'normal' ? 'selected' : ''}>🟡 Normal (Klassisch)</option>
+              <option value="hard" ${t.cpuDifficulty === 'hard' ? 'selected' : ''}>🔴 Stark (Tetris-Meister)</option>
+            </select>
+          </div>
+
+          <div class="tourney-config-item">
+            <label>❤️ Match-Format:</label>
+            <select id="tourney-bestof-select" class="tourney-select">
+              <option value="3" ${t.bestOf === 3 ? 'selected' : ''}>♥♥ Best of 3 (2 Herzen zum Sieg)</option>
+              <option value="1" ${t.bestOf === 1 ? 'selected' : ''}>♥ Best of 1 (1 K.O.-Runde)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Action Buttons Row -->
+        <div class="tourney-actions-row">
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            <button type="button" class="retro-btn retro-btn-secondary" id="btn-tourney-add-cpu" style="padding:7px 11px; font-size:11.5px;" ${baseList.length >= 8 ? 'disabled' : ''}>
+              + 🤖 CPU hinzufügen
+            </button>
+            ${customCpus.length > 0 ? `
+              <button type="button" class="retro-btn retro-btn-secondary" id="btn-tourney-rem-cpu" style="padding:7px 10px; font-size:11.5px;">
+                - 🤖 CPU (${customCpus.length})
+              </button>
+            ` : ''}
+            <button type="button" class="retro-btn retro-btn-secondary" id="btn-tourney-practice" style="padding:7px 11px; font-size:11.5px; border-color:#38bdf8; color:#7dd3fc;">
+              🎮 Training vs CPU
+            </button>
+          </div>
+
+          <button type="button" class="retro-btn tourney-start-cta" id="btn-tourney-start">
+            🏆 Turnier starten (${targetCount}er Feld)
+          </button>
+        </div>
+      `;
+
+      const sendConfig = () => {
+        if (!chatWs || chatWs.readyState !== WebSocket.OPEN) return;
+        const modeVal = document.getElementById('tourney-mode-select')?.value || 'builtin';
+        const fillVal = document.getElementById('tourney-fill-select')?.value || 'odd_plus_one';
+        const diffVal = document.getElementById('tourney-diff-select')?.value || 'normal';
+        const bestOfVal = parseInt(document.getElementById('tourney-bestof-select')?.value || '3', 10);
+        chatWs.send(JSON.stringify({
+          type: 'TOURNAMENT_CONFIG',
+          mode: modeVal,
+          fillMode: fillVal,
+          cpuDifficulty: diffVal,
+          bestOf: bestOfVal
+        }));
+      };
+
+      ['tourney-mode-select', 'tourney-fill-select', 'tourney-diff-select', 'tourney-bestof-select'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.onchange = sendConfig;
+      });
+
+      const addCpuBtn = document.getElementById('btn-tourney-add-cpu');
+      if (addCpuBtn) {
+        addCpuBtn.onclick = () => {
+          playRetroBlip(580, 'square', 0.05);
+          if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+            chatWs.send(JSON.stringify({ type: 'TOURNAMENT_ADD_CPU' }));
+          }
+        };
+      }
+
+      const remCpuBtn = document.getElementById('btn-tourney-rem-cpu');
+      if (remCpuBtn) {
+        remCpuBtn.onclick = () => {
+          playRetroBlip(420, 'square', 0.05);
+          if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+            chatWs.send(JSON.stringify({ type: 'TOURNAMENT_REMOVE_CPU' }));
+          }
+        };
+      }
+
+      const practiceBtn = document.getElementById('btn-tourney-practice');
+      if (practiceBtn) {
+        practiceBtn.onclick = launchPracticeVsCpu;
+      }
+
+      const startBtn = document.getElementById('btn-tourney-start');
+      if (startBtn) {
+        startBtn.onclick = () => {
+          playRetroBlip(660, 'triangle', 0.09);
+          setTimeout(() => playRetroBlip(880, 'triangle', 0.14), 90);
+          if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+            chatWs.send(JSON.stringify({
+              type: 'TOURNAMENT_START',
+              mode: document.getElementById('tourney-mode-select')?.value || t.mode,
+              fillMode: document.getElementById('tourney-fill-select')?.value || t.fillMode,
+              cpuDifficulty: document.getElementById('tourney-diff-select')?.value || t.cpuDifficulty,
+              bestOf: parseInt(document.getElementById('tourney-bestof-select')?.value || t.bestOf, 10)
+            }));
+          }
+        };
+      }
+      return;
+    }
+
+    // --- 2. ACTIVE OR COMPLETED TOURNAMENT BRACKET VIEW ---
+    const myMatch = getMyActiveTournamentMatch();
+    let activeMatchCalloutHtml = '';
+
+    if (t.status === 'completed' && t.champion) {
+      activeMatchCalloutHtml = `
+        <div class="tourney-champion-banner">
+          <div class="champ-trophy">🏆</div>
+          <div class="champ-info">
+            <div class="champ-label">TETRIS-TURNIERSIEGER</div>
+            <div class="champ-name">${escapeHtml(t.champion.avatar || '👑')} ${escapeHtml(t.champion.name)}</div>
+          </div>
+          <button type="button" class="retro-btn" id="btn-tourney-reset" style="padding:8px 14px; font-size:12px;">
+            🔄 Neues Turnier
+          </button>
+        </div>
+      `;
+    } else if (myMatch) {
+      const isP1 = (myMatch.p1 && myMatch.p1.id === playerId);
+      const meObj = isP1 ? myMatch.p1 : myMatch.p2;
+      const oppObj = isP1 ? myMatch.p2 : myMatch.p1;
+      const myWins = isP1 ? myMatch.wins1 : myMatch.wins2;
+      const oppWins = isP1 ? myMatch.wins2 : myMatch.wins1;
+
+      activeMatchCalloutHtml = `
+        <div class="tourney-my-match-box">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+            <div>
+              <span class="my-match-pill">⚔️ DEIN AKTIVES MATCH (${escapeHtml(myMatch.roundName)})</span>
+              <div style="font-size:13.5px; font-weight:800; color:#f8fafc; margin-top:4px;">
+                ${escapeHtml(meObj.avatar)} ${escapeHtml(meObj.name)}
+                <span style="color:#48c78e; margin:0 6px;">${myWins} : ${oppWins}</span>
+                ${escapeHtml(oppObj.avatar)} ${escapeHtml(oppObj.name)}
+              </div>
+            </div>
+
+            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+              ${t.mode === 'builtin' ? `
+                <button type="button" class="retro-btn" id="btn-open-my-tetris-match" style="padding:7px 12px; font-size:12px;">
+                  🕹️ Auf Game Boy spielen
+                </button>
+              ` : `
+                <button type="button" class="retro-btn" id="btn-claim-emu-win" style="padding:6px 10px; font-size:11.5px; background:#16a34a;" title="Punkt/Herz für dich melden">
+                  🏆 +1 Herz (Ich)
+                </button>
+                <button type="button" class="retro-btn retro-btn-secondary" id="btn-claim-emu-loss" style="padding:6px 10px; font-size:11.5px;" title="Punkt/Herz für Gegner melden">
+                  💥 +1 Herz (${escapeHtml(oppObj.name.slice(0, 10))})
+                </button>
+              `}
+            </div>
+          </div>
+
+          ${(t.mode === 'emulator' && oppObj && oppObj.isCpu) ? `
+            <div class="emu-cpu-preview-row">
+              <canvas id="emulator-cpu-mini-canvas" width="160" height="144" class="emu-cpu-mini-lcd"></canvas>
+              <div style="font-size:11.5px; color:#cbd5e1; line-height:1.4;">
+                <strong>🤖 Dual-WASM CPU-Game-Boy aktiv (${escapeHtml(oppObj.name)})</strong><br>
+                Dieser zweite Game Boy läuft im Hintergrund und ist per virtuellem Link-Kabel direkt mit deinem Emulator verbunden!
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+
+    // Build visual K.O. Bracket Columns for all generated rounds
+    const rounds = t.rounds || [];
+    const bracketColsHtml = rounds.map((roundMatches, rIdx) => {
+      const roundTitle = (roundMatches[0] && roundMatches[0].roundName) || `Runde ${rIdx + 1}`;
+      const isCurrent = (rIdx === t.currentRound && t.status === 'active');
+
+      const matchesHtml = roundMatches.map(m => {
+        const p1Won = (m.status === 'completed' && m.winnerId === m.p1.id);
+        const p2Won = (m.status === 'completed' && m.winnerId === m.p2.id);
+        const isMyMatch = (m.p1.id === playerId || m.p2.id === playerId);
+
+        const hearts1 = '♥'.repeat(m.wins1 || 0) + '♡'.repeat(Math.max(0, (m.winsNeeded || 2) - (m.wins1 || 0)));
+        const hearts2 = '♥'.repeat(m.wins2 || 0) + '♡'.repeat(Math.max(0, (m.winsNeeded || 2) - (m.wins2 || 0)));
+
+        return `
+          <div class="bracket-match-card ${m.status === 'active' ? 'is-live' : 'is-done'} ${isMyMatch ? 'is-mine' : ''}">
+            <div class="bracket-match-header">
+              <span>Match #${m.matchIndex + 1}</span>
+              ${m.status === 'active' ? `
+                <button type="button" class="bracket-spectate-btn" data-spectate-round="${rIdx}" data-spectate-match="${m.id}">
+                  ${isMyMatch && t.mode === 'builtin' ? '🕹️ Spielen' : '👁️ Live'}
+                </button>
+              ` : `<span style="color:#48c78e;">✅ Beendet</span>`}
+            </div>
+
+            <div class="bracket-player-row ${p1Won ? 'winner' : (p2Won ? 'loser' : '')}">
+              <span class="bp-name">
+                ${escapeHtml(m.p1.avatar || '🎮')} ${escapeHtml(m.p1.name)}
+                ${m.p1.isCpu ? '<span class="cpu-mini-tag">CPU</span>' : ''}
+              </span>
+              <span class="bp-score">${hearts1}</span>
+            </div>
+
+            <div class="bracket-player-row ${p2Won ? 'winner' : (p1Won ? 'loser' : '')}">
+              <span class="bp-name">
+                ${escapeHtml(m.p2.avatar || '🎮')} ${escapeHtml(m.p2.name)}
+                ${m.p2.isCpu ? '<span class="cpu-mini-tag">CPU</span>' : ''}
+              </span>
+              <span class="bp-score">${hearts2}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      return `
+        <div class="bracket-round-col ${isCurrent ? 'current-round' : ''}">
+          <div class="bracket-round-title">${escapeHtml(roundTitle)}</div>
+          <div class="bracket-matches-list">
+            ${matchesHtml}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    container.innerHTML = `
+      ${activeMatchCalloutHtml}
+      <div class="tourney-bracket-scroll">
+        ${bracketColsHtml}
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; padding-top:10px; border-top:1px solid #283040;">
+        <span style="font-size:11px; color:#94a3b8;">
+          Modus: <strong>${t.mode === 'builtin' ? '🕹️ Integriertes DMG Tetris' : '🔗 Emulator Link-Kabel'}</strong> • ${t.participants ? t.participants.length : 0} Teilnehmer
+        </span>
+        <button type="button" class="retro-btn retro-btn-secondary" id="btn-tourney-reset-bottom" style="padding:5px 10px; font-size:11px;">
+          🔄 Turnier neu starten
+        </button>
+      </div>
+    `;
+
+    const playMyBtn = document.getElementById('btn-open-my-tetris-match');
+    if (playMyBtn && myMatch) {
+      playMyBtn.onclick = () => {
+        wireArenaCallbacks();
+        if (window.gbTetrisArena) {
+          window.gbTetrisArena.startMatch(myMatch, playerId);
+        }
+      };
+    }
+
+    const claimWinBtn = document.getElementById('btn-claim-emu-win');
+    if (claimWinBtn && myMatch) {
+      claimWinBtn.onclick = () => {
+        if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+          chatWs.send(JSON.stringify({
+            type: 'TOURNAMENT_REPORT_WIN',
+            matchId: myMatch.id,
+            winnerId: playerId
+          }));
+        }
+      };
+    }
+
+    const claimLossBtn = document.getElementById('btn-claim-emu-loss');
+    if (claimLossBtn && myMatch) {
+      const opp = (myMatch.p1.id === playerId) ? myMatch.p2 : myMatch.p1;
+      claimLossBtn.onclick = () => {
+        if (chatWs && chatWs.readyState === WebSocket.OPEN && opp) {
+          chatWs.send(JSON.stringify({
+            type: 'TOURNAMENT_REPORT_WIN',
+            matchId: myMatch.id,
+            winnerId: opp.id
+          }));
+        }
+      };
+    }
+
+    const doResetTourney = () => {
+      if (confirm('Möchtest du das aktuelle Turnier wirklich zurücksetzen?')) {
+        if (window.gbTetrisArena && window.gbTetrisArena.isVisible) {
+          window.gbTetrisArena.hide();
+        }
+        setWorkletCpuBotMode(false);
+        if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+          chatWs.send(JSON.stringify({ type: 'TOURNAMENT_RESET' }));
+        }
+      }
+    };
+
+    const resetBtn1 = document.getElementById('btn-tourney-reset');
+    if (resetBtn1) resetBtn1.onclick = doResetTourney;
+    const resetBtn2 = document.getElementById('btn-tourney-reset-bottom');
+    if (resetBtn2) resetBtn2.onclick = doResetTourney;
+
+    container.querySelectorAll('.bracket-spectate-btn').forEach(btn => {
+      btn.onclick = () => {
+        const rIdx = parseInt(btn.getAttribute('data-spectate-round'), 10);
+        const mId = btn.getAttribute('data-spectate-match');
+        const roundArr = (t.rounds && t.rounds[rIdx]) || [];
+        const found = roundArr.find(x => x.id === mId);
+        if (!found) return;
+        wireArenaCallbacks();
+        if (found.p1.id === playerId || found.p2.id === playerId) {
+          if (t.mode === 'builtin' && window.gbTetrisArena) {
+            window.gbTetrisArena.startMatch(found, playerId);
+          }
+        } else if (window.gbTetrisArena) {
+          window.gbTetrisArena.startSpectating(found);
+          showToast(`👁️ Du schaust jetzt ${found.p1.name} vs. ${found.p2.name} zu!`);
+        }
+      };
+    });
+  }
+
   function sendPartyUpdate() {
     if (!chatWs || chatWs.readyState !== WebSocket.OPEN) return;
     const emuReady = !!(window.__gbWorkletNode && window.__gbWorkletNode.port);
@@ -748,6 +1404,7 @@
     if (!clean) return;
 
     currentRoom = clean;
+    activeLinkMatchId = null;
     localStorage.setItem('gb_last_room', clean);
 
     try {
@@ -758,7 +1415,7 @@
 
     updateHeaderProfileUI();
     connectChat(clean, true);
-    connectDirectLinkCable(true);
+    connectDirectLinkCable(true, '');
     updateLinkCableUI();
     showToast(`🎉 Raum gewechselt: ${clean}`);
   }
@@ -793,8 +1450,8 @@
       header.innerHTML = `
         <div class="header-left-group">
           <div class="retro-logo">
-            <span class="retro-logo-icon">🎮</span>
-            <span class="retro-logo-text">GAME BOY PARTY</span>
+            <span class="retro-logo-icon">🏆</span>
+            <span class="retro-logo-text">GAME BOY TETRIS TURNIER</span>
           </div>
 
           <!-- Treffen-inspired Room Pill -->
@@ -845,6 +1502,17 @@
       rightCol.id = 'right-dashboard-col';
       rightCol.className = 'dashboard-panel';
       rightCol.innerHTML = `
+        <!-- 🏆 8-Player Tetris Tournament & CPU Auto-Fill Card -->
+        <div class="retro-card tournament-main-card">
+          <div class="couch-header-row">
+            <div class="retro-card-title" style="margin-bottom:0; color:#fbbf24;">
+              <span>🏆</span> Tetris-Turnier (bis 8 Spieler)
+              <span class="couch-badge" id="tournament-status-badge">Max. 8 Spieler + 🤖 Auto-CPU</span>
+            </div>
+          </div>
+          <div id="tournament-panel-body"></div>
+        </div>
+
         <!-- Treffen-inspired Party-Couch & Matchmaking Card -->
         <div class="retro-card">
           <div class="couch-header-row">
@@ -918,13 +1586,13 @@
           </div>
           <div class="chat-messages" id="chat-messages-list">
             <div class="chat-msg system">
-              <div class="chat-bubble">Willkommen in Raum <strong>${escapeHtml(currentRoom)}</strong>! Teile den Link oder Code mit deinem Mitspieler.</div>
+              <div class="chat-bubble">Willkommen in Raum <strong>${escapeHtml(currentRoom)}</strong>! Teile den Link oder Code mit deinen Mitspielern (bis zu 8 Spieler im Turnier!).</div>
             </div>
           </div>
           <div class="quick-reactions">
-            <button class="reaction-btn" data-msg="🎮 Bereit!">🎮 Bereit!</button>
-            <button class="reaction-btn" data-msg="🔄 Tausch bereit!">🔄 Tausch!</button>
-            <button class="reaction-btn" data-msg="⚔️ Lass kämpfen!">⚔️ Kampf!</button>
+            <button class="reaction-btn" data-msg="🎮 Bereit fürs Turnier!">🎮 Bereit!</button>
+            <button class="reaction-btn" data-msg="🏆 Startet das Turnier!">🏆 Turnier!</button>
+            <button class="reaction-btn" data-msg="⚡ Tetris-Attacke!">⚡ Tetris!</button>
             <button class="reaction-btn" data-msg="👏 Gutes Spiel!">👏 GG!</button>
             <button class="reaction-btn" data-msg="🔥 Noch eine Runde!">🔥 Revanche!</button>
             <button class="reaction-btn" data-msg="⏰ Moment...">⏰ Moment...</button>
@@ -939,9 +1607,9 @@
         <div class="retro-card">
           <div class="retro-card-title"><span>⌨️</span> Tastatur-Steuerung</div>
           <div class="controls-legend">
-            <div class="key-badge-card"><span class="key-cap">⬅️⬆️⬇️➡️</span><span class="key-desc">D-Pad</span></div>
-            <div class="key-badge-card"><span class="key-cap">A / J</span><span class="key-desc">A-Knopf</span></div>
-            <div class="key-badge-card"><span class="key-cap">B / K</span><span class="key-desc">B-Knopf</span></div>
+            <div class="key-badge-card"><span class="key-cap">⬅️⬆️⬇️➡️</span><span class="key-desc">D-Pad / Move</span></div>
+            <div class="key-badge-card"><span class="key-cap">A / J / W</span><span class="key-desc">Drehen (A)</span></div>
+            <div class="key-badge-card"><span class="key-cap">B / K / Space</span><span class="key-desc">Hard Drop (B)</span></div>
             <div class="key-badge-card"><span class="key-cap">Enter</span><span class="key-desc">Start</span></div>
             <div class="key-badge-card"><span class="key-cap">Backspace</span><span class="key-desc">Select</span></div>
           </div>
@@ -957,6 +1625,7 @@
       wireEvents();
       updateHeaderProfileUI();
       renderPartyRoster();
+      renderTournamentPanel();
       updateRomDisplay();
       refreshSaveManagerList();
       connectChat(currentRoom);
@@ -973,13 +1642,13 @@
         <div class="party-modal-card" style="text-align:center;">
           <button class="party-modal-close" data-close-modal="party-qr-modal">✕</button>
           <div style="font-size:32px; margin-bottom:6px;">📱</div>
-          <h3 style="margin:0 0 6px 0; font-size:18px; color:#f8fafc;">Freunde zur Party einladen</h3>
-          <p style="margin:0 0 14px 0; font-size:13px; color:#94a3b8;">Scanne den QR-Code oder teile den 4-stelligen Freundescode:</p>
+          <h3 style="margin:0 0 6px 0; font-size:18px; color:#f8fafc;">Freunde zum Turnier einladen</h3>
+          <p style="margin:0 0 14px 0; font-size:13px; color:#94a3b8;">Scanne den QR-Code oder teile den 4-stelligen Freundescode (bis 8 Spieler):</p>
           <div style="background:#10141d; border:1.5px solid #2e3646; border-radius:12px; padding:10px; display:inline-block; margin-bottom:12px;">
             <img id="party-qr-img" src="" alt="QR Code" style="width:170px; height:170px; border-radius:8px; display:block;">
           </div>
           <div style="margin-bottom:14px;">
-            <span style="font-size:11px; color:#94a3b8; display:block; margin-bottom:4px;">PARTY- & LINK-KABEL-CODE</span>
+            <span style="font-size:11px; color:#94a3b8; display:block; margin-bottom:4px;">PARTY- & TURNIER-CODE</span>
             <span id="party-qr-code-text" style="font-family:'Press Start 2P', monospace; font-size:20px; color:#48c78e; letter-spacing:3px;">${escapeHtml(currentRoom)}</span>
           </div>
           <div style="display:flex; gap:8px;">
@@ -1084,7 +1753,7 @@
     modal.classList.add('open');
   }
 
-  // Connect to Party-Hub & Live Chat WebSocket (/chat)
+  // Connect to Party-Hub, Live Chat & Tournament WebSocket (/chat)
   function connectChat(roomName, force = false) {
     if (!roomName) return;
     const cleanRoom = normalizeRoomCode(roomName) || 'lobby';
@@ -1124,8 +1793,75 @@
             if (msg.selectedRom && !partyState.selectedRom) {
               partyState.selectedRom = msg.selectedRom;
             }
+            if (msg.tournament) {
+              partyState.tournament = msg.tournament;
+            }
             updateHeaderProfileUI();
             renderPartyRoster();
+            renderTournamentPanel();
+            return;
+          }
+
+          if (msg.type === 'TOURNAMENT_SYNC') {
+            if (msg.tournament) {
+              partyState.tournament = msg.tournament;
+              renderTournamentPanel();
+              syncTournamentMatchExecution(false);
+            }
+            return;
+          }
+
+          if (msg.type === 'TOURNAMENT_STARTED' || msg.type === 'TOURNAMENT_ROUND_STARTED') {
+            if (msg.tournament) {
+              partyState.tournament = msg.tournament;
+              renderTournamentPanel();
+              syncTournamentMatchExecution(true);
+            }
+            return;
+          }
+
+          if (msg.type === 'TOURNAMENT_GARBAGE_INCOMING') {
+            const myMatch = getMyActiveTournamentMatch();
+            if (myMatch && msg.matchId === myMatch.id && msg.fromPlayerId !== playerId) {
+              if (!msg.targetPlayerId || msg.targetPlayerId === playerId) {
+                if (window.gbTetrisArena) {
+                  window.gbTetrisArena.receiveGarbage(msg.lines || 1, msg.holeCol);
+                }
+              }
+            }
+            return;
+          }
+
+          if (msg.type === 'TOURNAMENT_BOARD_STATE') {
+            if (window.gbTetrisArena) {
+              window.gbTetrisArena.receiveRemoteBoardState(msg);
+            }
+            return;
+          }
+
+          if (msg.type === 'TOURNAMENT_HEART_WON') {
+            const myMatch = getMyActiveTournamentMatch();
+            if (myMatch && msg.matchId === myMatch.id && window.gbTetrisArena) {
+              window.gbTetrisArena.onHeartRoundTransition(msg.roundWinnerName || 'Spieler', msg.wins1, msg.wins2, msg.nextSeed);
+            }
+            return;
+          }
+
+          if (msg.type === 'TOURNAMENT_MATCH_COMPLETED') {
+            if (window.gbTetrisArena && window.gbTetrisArena.activeMatch && window.gbTetrisArena.activeMatch.id === msg.matchId) {
+              window.gbTetrisArena.onMatchFinished(msg.winner);
+            }
+            return;
+          }
+
+          if (msg.type === 'TOURNAMENT_CHAMPION') {
+            if (msg.tournament) {
+              partyState.tournament = msg.tournament;
+              renderTournamentPanel();
+            }
+            if (msg.champion) {
+              showToast(`🏆 Turniersieger: ${msg.champion.avatar || '👑'} ${msg.champion.name}!`);
+            }
             return;
           }
 
@@ -1134,6 +1870,7 @@
             partyState.isHost = (msg.newHostId === playerId);
             updateHeaderProfileUI();
             renderPartyRoster();
+            renderTournamentPanel();
             if (partyState.isHost) {
               showToast('👑 Du bist jetzt der Party-Host!');
             }
@@ -1636,6 +2373,14 @@
     const eggButton = document.querySelector('#root button[class*="startButton"]') || document.querySelector('button[class*="startButton"]');
     const emuFileInput = getEmulatorFileInput();
     let overlay = document.getElementById('start-game-overlay');
+
+    if (window.gbTetrisArena && window.gbTetrisArena.isVisible) {
+      if (overlay) overlay.style.display = 'none';
+      const rootEl = document.getElementById('root');
+      if (rootEl) rootEl.style.display = 'none';
+      updateLinkCableUI();
+      return;
+    }
 
     // 1. Render authentic Standby Game Boy DMG Shell with Character & Name Selection inside #left-console-col
     if (eggButton && !overlay && !isCreatingStandbyOverlay) {

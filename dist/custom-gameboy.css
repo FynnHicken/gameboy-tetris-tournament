@@ -1430,3 +1430,516 @@ section.section .message-body {
   }
 }
 
+
+/* =========================================================
+   🏆 8-PLAYER TETRIS TOURNAMENT & BRACKET UI STYLES
+   ========================================================= */
+
+.tournament-main-card {
+  border-color: rgba(251, 191, 36, 0.45);
+  background: linear-gradient(160deg, rgba(251, 191, 36, 0.06) 0%, #1c212d 42%);
+}
+
+.tournament-live-badge {
+  background: rgba(239, 68, 68, 0.18) !important;
+  border-color: rgba(239, 68, 68, 0.55) !important;
+  color: #fca5a5 !important;
+  animation: pulse-yellow 1.5s infinite;
+}
+
+.tournament-champ-badge {
+  background: rgba(251, 191, 36, 0.2) !important;
+  border-color: #fbbf24 !important;
+  color: #fde68a !important;
+}
+
+.tourney-info-banner {
+  background: #10141d;
+  border: 1px solid #2e3646;
+  border-left: 3px solid #fbbf24;
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 12px;
+  color: #e2e8f0;
+  margin-bottom: 12px;
+  line-height: 1.4;
+}
+
+.tourney-slots-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+@media (max-width: 640px) {
+  .tourney-slots-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.tourney-slot-chip {
+  background: #11151f;
+  border: 1.5px solid #283040;
+  border-radius: 10px;
+  padding: 7px 9px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  position: relative;
+}
+
+.tourney-slot-chip.human {
+  border-color: rgba(72, 199, 142, 0.5);
+  background: rgba(72, 199, 142, 0.08);
+}
+
+.tourney-slot-chip.cpu {
+  border-color: rgba(56, 189, 248, 0.5);
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.tourney-slot-chip.cpu.auto-fill {
+  border-style: dashed;
+}
+
+.tourney-slot-chip.empty {
+  opacity: 0.45;
+  border-style: dotted;
+}
+
+.tourney-slot-chip .slot-num {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8.5px;
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.tourney-slot-chip .slot-ava {
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.tourney-slot-chip .slot-name {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #f1f5f9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.tourney-slot-chip .slot-tag {
+  font-size: 8.5px;
+  font-weight: 800;
+  background: #0284c7;
+  color: #e0f2fe;
+  padding: 1px 4px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.tourney-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+@media (max-width: 560px) {
+  .tourney-config-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tourney-config-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tourney-config-item label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #94a3b8;
+}
+
+.tourney-select {
+  background: #10141d;
+  border: 1px solid #334155;
+  color: #f8fafc;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  outline: none;
+  width: 100%;
+}
+
+.tourney-select:focus {
+  border-color: #fbbf24;
+}
+
+.tourney-actions-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 10px;
+  border-top: 1px solid #283040;
+}
+
+.tourney-start-cta {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
+  color: #0f172a !important;
+  font-weight: 900 !important;
+  box-shadow: 0 4px 14px rgba(245, 158, 11, 0.35) !important;
+}
+
+.tourney-start-cta:hover {
+  box-shadow: 0 6px 20px rgba(245, 158, 11, 0.5) !important;
+}
+
+/* Active Match Banner & Champion Callout */
+.tourney-my-match-box {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1.5px solid #10b981;
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+
+.my-match-pill {
+  display: inline-block;
+  background: #10b981;
+  color: #052e16;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8.5px;
+  padding: 3px 7px;
+  border-radius: 4px;
+}
+
+.emu-cpu-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.emu-cpu-mini-lcd {
+  width: 96px;
+  height: 86px;
+  background: #8ba340;
+  border: 2px solid #0f380f;
+  border-radius: 6px;
+  image-rendering: pixelated;
+  flex-shrink: 0;
+}
+
+.tourney-champion-banner {
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.2) 0%, rgba(217, 119, 6, 0.1) 100%);
+  border: 2px solid #fbbf24;
+  border-radius: 14px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.champ-trophy {
+  font-size: 34px;
+  filter: drop-shadow(0 0 12px rgba(251, 191, 36, 0.6));
+}
+
+.champ-info {
+  flex: 1;
+  min-width: 140px;
+}
+
+.champ-label {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 9px;
+  color: #fbbf24;
+  margin-bottom: 4px;
+}
+
+.champ-name {
+  font-size: 17px;
+  font-weight: 900;
+  color: #f8fafc;
+}
+
+/* Visual K.O. Bracket Tree */
+.tourney-bracket-scroll {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+
+.bracket-round-col {
+  flex: 1;
+  min-width: 195px;
+  background: #10141d;
+  border: 1px solid #283040;
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bracket-round-col.current-round {
+  border-color: rgba(251, 191, 36, 0.6);
+  box-shadow: inset 0 0 15px rgba(251, 191, 36, 0.06);
+}
+
+.bracket-round-title {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 9.5px;
+  color: #fbbf24;
+  text-align: center;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #262e3f;
+}
+
+.bracket-matches-list {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
+  gap: 8px;
+  flex: 1;
+}
+
+.bracket-match-card {
+  background: #171c28;
+  border: 1.5px solid #2d3648;
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.bracket-match-card.is-live {
+  border-color: #38bdf8;
+}
+
+.bracket-match-card.is-mine {
+  border-color: #48c78e;
+  background: rgba(72, 199, 142, 0.07);
+}
+
+.bracket-match-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  color: #94a3b8;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.bracket-spectate-btn {
+  background: #2563eb;
+  border: none;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.bracket-spectate-btn:hover {
+  background: #1d4ed8;
+}
+
+.bracket-player-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: #10141d;
+  font-size: 12px;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+.bracket-player-row.winner {
+  background: rgba(22, 163, 74, 0.22);
+  color: #86efac;
+  border: 1px solid rgba(22, 163, 74, 0.5);
+}
+
+.bracket-player-row.loser {
+  opacity: 0.48;
+  text-decoration: line-through;
+}
+
+.bp-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cpu-mini-tag {
+  font-size: 8.5px;
+  background: #334155;
+  color: #7dd3fc;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.bp-score {
+  color: #f43f5e;
+  font-size: 11px;
+  letter-spacing: 1px;
+  flex-shrink: 0;
+}
+
+/* =========================================================
+   🕹️ BUILT-IN GAME BOY DMG TETRIS CONSOLE SHELL & CONTROLS
+   ========================================================= */
+
+.tournament-gb-shell {
+  cursor: default !important;
+}
+
+.gb-tournament-lcd-frame {
+  background: #9bbc0f;
+  border-radius: 4px;
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.78);
+  padding: 4px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+#gb-tournament-canvas {
+  width: 100%;
+  max-width: 310px;
+  height: auto;
+  aspect-ratio: 320 / 288;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  display: block;
+  border-radius: 2px;
+}
+
+.gb-mini-top-btn {
+  background: #252b38;
+  border: 1px solid #3e485e;
+  color: #e2e8f0;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+
+.gb-mini-top-btn:hover {
+  background: #334155;
+}
+
+.gb-interactive-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px 18px 16px;
+}
+
+.gb-dpad-cluster {
+  position: relative;
+  width: 102px;
+  height: 102px;
+}
+
+.gb-pad-btn {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  background: #222;
+  color: #94a3b8;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: inset 0 2px 3px rgba(255,255,255,0.15), 0 3px 5px rgba(0,0,0,0.45);
+  user-select: none;
+  touch-action: manipulation;
+}
+
+.gb-pad-btn:active {
+  background: #3b3b3b;
+  color: #48c78e;
+  transform: scale(0.95);
+}
+
+.gb-pad-btn.up { top: 0; left: 34px; border-radius: 5px 5px 0 0; }
+.gb-pad-btn.down { bottom: 0; left: 34px; border-radius: 0 0 5px 5px; }
+.gb-pad-btn.left { top: 34px; left: 0; border-radius: 5px 0 0 5px; }
+.gb-pad-btn.right { top: 34px; right: 0; border-radius: 0 5px 5px 0; }
+
+.gb-pad-center {
+  position: absolute;
+  top: 34px;
+  left: 34px;
+  width: 34px;
+  height: 34px;
+  background: #1d1d1d;
+}
+
+.gb-ab-cluster {
+  display: flex;
+  gap: 18px;
+  transform: rotate(-22deg);
+}
+
+.gb-ab-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.gb-round-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--gb-btn-ab);
+  border: none;
+  color: #f8fafc;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 11px;
+  cursor: pointer;
+  box-shadow: inset 0 2px 4px rgba(255,255,255,0.28), 0 4px 7px rgba(0,0,0,0.55);
+  touch-action: manipulation;
+}
+
+.gb-round-btn:active {
+  background: var(--gb-btn-ab-dark);
+  transform: translateY(2px);
+}
+
+.gb-btn-lbl {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 7.5px;
+  color: #1b264f;
+  letter-spacing: 0.5px;
+}

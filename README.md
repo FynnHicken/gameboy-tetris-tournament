@@ -1,84 +1,57 @@
-# 🎮 Game Boy Online Multiplayer (Link-Cable Netplay & Live-Chat)
+# 🏆 Game Boy Online Multiplayer – 8-Spieler Tetris-Turnier Edition
 
-Ein selbstgehosteter **Game Boy (DMG) & Game Boy Color (CGB) Online-Multiplayer-Emulator** mit virtuellem **Link-Kabel**, **4-stelligem Freundescode-System**, **integriertem Live-Chat** und **`.sav` Spielstand-Manager**.
-
-Perfekt geeignet, um im Browser gegeneinander **Tetris** zu spielen oder in **Pokémon (Gen 1 & Gen 2)** über das Internet Pokémon zu tauschen und gegeneinander anzutreten.
+Ein erweiterter Fork von [FynnHicken/gameboy-multiplayer](https://github.com/FynnHicken/gameboy-multiplayer) mit einem integrierten **Tetris-Turnier-Modus für bis zu 8 Spieler**, **automatischer CPU-Gegner-Auffüllung bei ungerader Spieleranzahl**, **Live-Zuschauer-Modus** und **Dual-WASM Link-Kabel CPU-Bot**.
 
 ---
 
-## ✨ Features
+## ✨ Neue Turnier-Features
 
-- **🎉 Party-Hub Matchmaking (inspiriert von [NobleBrains/treffen](https://github.com/NobleBrains/treffen)):**
-  - **Sofortiger Raum beim Öffnen (`?room=xxxx`):** Kein manuelles Erstellen nötig – jeder Besuch erhält sofort einen 4-stelligen Raumcode (Kleinbuchstaben & Zahlen **ohne `o`**) direkt in der URL.
-  - **Header Room-Pill & QR-Code:** Einladungslink mit 1 Klick kopieren (`📋`), per **QR-Code (`📱`)** scannen, Raum wechseln (`✏️`) oder zufälligen Raum würfeln (`🎲`).
-  - **Party-Couch & Spieler-Karten (`ROSTER_SYNC`):** Live-Übersicht aller Spieler im Raum mit wählbarem Avatar (18 Retro-Avatare), Farb-Rahmen, Bereit-Status, aktuell gespieltem Spiel und **Host-Krone (`👑`)** inkl. Host-Übergabe.
-  - **🚀 Synchroner Party-ROM-Start:** Der Party-Host kann eine Server-ROM auswählen und mit **`🚀 Für Party starten`** zeitgleich auf den Bildschirmen aller Mitspieler im Raum booten.
-- **🔗 Vollautomatisches Link-Kabel (`Auto-Link-Cable`):**
-  - Sobald zwei Spieler im selben Party-Raum ein Spiel gestartet haben, verbindet sich das virtuelle Game Boy Serial-Link-Kabel **automatisch im Hintergrund** (`/ws?room=xxxx&direct=1`) – ganz ohne Untermenüs.
-  - **Auto-Reconnect:** Lädt ein Spieler die Seite neu, wird das Link-Kabel nahtlos neu gekoppelt.
-- **🕹️ Authentisches Retro Game Boy DMG Design:**
-  - Detailliertes Game Boy Gehäuse mit integrierter Spieler- & Charakterauswahl beim Einschalten, interaktivem D-Pad, A/B-Buttons und 8-Bit Web-Audio-Soundeffekten.
-- **💬 Integrierter Echtzeit-Chat:**
-  - Eigener WebSocket-Chat (`/chat`) pro Raum inkl. Chat-Historie, Spielername, Avatar und Schnell-Reaktionen (*„🎮 Bereit!“*, *„🔄 Lass tauschen!“*, *„⚔️ Kampf!“*, *„🎉 GG!“*).
-- **🛡️ Session- & Reload-Schutz (Persistence Engine):**
-  - Schutz vor versehentlichem Neuladen (`beforeunload`).
-  - Automatisches Caching der aktiven ROM in `IndexedDB` (`gb_session_persistence`), sodass nach einem Reload sofort weitergespielt werden kann.
-- **💾 `.sav` Battery-Save Manager:**
-  - Exportiert und importiert echte **32 KB (`32.768 Bytes`) SRAM-Spielstände**.
-  - **Live Spielstand-Inspektor im Browser:** Prüft Pokémon-Teamlisten, Box-Terminatoren und Gen-1/Gen-2-Checksummen und zeigt Trainer-Namen, Pokémon-Anzahl und Orden live an.
-  - **Echtzeit-Sync (`🔄 Emulator sichern`):** Erzwingt das sofortige Auslesen des aktuellen WASM-RAMs ohne Verzögerung.
-  - **1-Klick Starter-Spielstand (`⭐ Starter-Spielstand`):** Lädt einen vorab validierten Pokémon-Rot-Spielstand (Trainer `ROT`), der direkt heruntergeladen oder im Emulator weitergespielt werden kann.
+- **🏆 K.O.-Turnierbaum für bis zu 8 Spieler (Viertelfinale ➔ Halbfinale ➔ Finale):**
+  - Bis zu 8 Spieler im selben Party-Raum treten im K.O.-System (Best-of-1 oder Best-of-3 Herzen `♥♥`) gegeneinander an.
+  - **Live-Turnierbaum (Bracket):** Echtzeit-Übersicht über alle laufenden und abgeschlossenen Matches jeder Runde inkl. Sieger-Krönung.
+- **🤖 Automatische CPU-Auffüllung bei ungerader Spieleranzahl:**
+  - **Ungerade Spielerzahl (`odd_plus_one`):** Bei 1, 3, 5 oder 7 Spielern wird das Teilnehmerfeld beim Start vollautomatisch mit einem **Retro-CPU-Gegner** (*R.O.B. 89*, *DMG-01 Bot*, *Tetromino Rex*, *Alexey AI*, *Pixel Byte*, *Link-Master*, *Korobeiniki*) auf eine gerade Anzahl aufgefüllt – niemand muss aussetzen!
+  - **Wildcard-CPU in späteren Runden:** Entsteht in einer Folgerunde (z. B. nach 3 Viertelfinal-Matches bei 6 Spielern = 3 Halbfinalisten) erneut eine ungerade Anzahl, rückt automatisch ein Wildcard-CPU-Gegner ins Halbfinale nach, sodass jedes Match ein echtes 1v1-Duell bleibt.
+  - **Voller 4er/8er Turnierbaum (`bracket_full`) & manuelle CPU-Bots:** Wahlweise kann das Turnier auch komplett auf 4 oder 8 Plätze mit CPUs aufgefüllt oder in der Lobby per **`+ 🤖 CPU hinzufügen`** beliebig ergänzt werden (auch perfekt für **Solo-Turniere gegen 3 oder 7 CPUs**!).
+- **🕹️ Dual-Engine Modus (Integriertes DMG Tetris & Emulator Link-Kabel):**
+  1. **Integriertes Game Boy DMG Turnier-Tetris (sofort ohne ROM spielbar):**
+     - Authentische 4-Farben Game Boy DMG LCD-Grafik direkt im Game Boy Gehäuse inkl. 8-Bit *Korobeiniki (Type-A)* Chiptune-Musik.
+     - Synchronisierter Zufalls-Seed (`match.seed`) pro Match: Beide Kontrahenten erhalten exakt dieselbe Tetromino-Reihenfolge.
+     - **Müllzeilen-Angriffe (Garbage Lines):** Double (+1 Zeile), Triple (+2 Zeilen), Tetris (+4 Zeilen) + Combo-Bonus und Gegenangriff-Konter.
+     - **Heuristische CPU-KI** in 3 Schwierigkeitsgraden (*Leicht*, *Normal*, *Stark*) + **Solo-Training gegen CPU**.
+     - **👁️ Live-Zuschauer-Modus:** Ausgeschiedene oder wartende Spieler können jedes laufende Match live im Split-Screen auf ihrem Game Boy verfolgen.
+  2. **Emulator Link-Kabel Modus (`tetris.gb` / `.gb` ROMs):**
+     - **Isolierte Match-Link-Kabel:** Jedes 1v1-Match im Turnierbaum erhält einen eigenen dedizierten Link-Kabel-Kanal (`/ws?room=xxxx&matchId=m_r0_0&direct=1`), sodass bis zu 4 Matches (8 Spieler) gleichzeitig im selben Party-Raum über das virtuelle Link-Kabel spielen können.
+     - **🤖 Dual-WASM Link-Kabel CPU-Bot:** Trifft ein Spieler im Emulator-Modus auf einen CPU-Gegner, startet im AudioWorklet automatisch ein **zweiter headless Game Boy (`WebEmulator` WASM-Instanz)**, der per virtuellem Link-Kabel gekoppelt ist und dessen Live-LCD-Bildschirm als Mini-Vorschau angezeigt wird.
 
 ---
 
 ## 🚀 Schnellstart (Docker Compose)
 
 ```bash
-git clone https://github.com/FynnHicken/gameboy-multiplayer.git
-cd gameboy-multiplayer
+git clone https://github.com/FynnHicken/gameboy-tetris-tournament.git
+cd gameboy-tetris-tournament
 
 # Optional: Eigene .gb / .gbc ROMs in den Ordner ./roms legen
 docker compose up -d --build
 ```
 
-Der Server läuft anschließend auf **`http://localhost:8000`** (intern Port `8080`).
+Oder direkt mit Node.js starten:
 
----
-
-## ⌨️ Steuerung
-
-| Game Boy Taste | Tastatur (Primär) | Alternativ |
-| :--- | :--- | :--- |
-| **Steuerkreuz (D-Pad)** | `W` `A` `S` `D` | Pfeiltasten `↑` `←` `↓` `→` |
-| **A-Knopf** | `J` | `X` / `Z` |
-| **B-Knopf** | `K` | `Y` |
-| **START** | `Enter` | — |
-| **SELECT** | `Shift` / `Backspace` | — |
-
----
-
-## 💾 Spielstände (`.sav`) exportieren & importieren
-
-1. **Im Spiel speichern:** Drücke im laufenden Spiel **START (`Enter`) ➔ SICHERN** und bestätige mit **JA**. *(Wichtig: Ohne Ingame-Speichern enthält der Battery-RAM nur leere `0x00`-Bytes).*
-2. **Synchronisieren:** Klicke rechts im **Spielstand (.sav) Manager** auf **`🔄 Emulator sichern (Sync)`**.
-3. **Herunterladen:** Sobald das grüne Badge **`Verifiziert ✅`** inkl. Trainername angezeigt wird, klicke auf **`⬇️ .sav (32 KB)`**.
-4. **Re-importieren:** Über **`⬆️ .sav importieren`** kannst du jeden kompatiblen 32-KB-Spielstand wieder in den Browser laden.
-
----
-
-## 📁 Projektstruktur
-
-```text
-├── Dockerfile              # Node 20 Alpine Container-Konfiguration
-├── docker-compose.yml      # Docker Compose Setup (Port 8000 -> 8080)
-├── package.json            # Server-Abhängigkeiten (ws)
-├── server.js               # HTTP-Server, ROM-API, Netplay-Relay (/ws) & Party-Hub (/chat)
-├── roms/                   # Ordner für Server-ROMs (.gb/.gbc) + Starter-Spielstand
-│   ├── README.md
-│   └── pokemon_rot.sav     # Validierter 32 KB Gen-1-Starter-Spielstand
-└── dist/                   # Web-Frontend & WebAssembly Emulator-Core
-    ├── index.html
-    ├── custom-gameboy.css  # Retro DMG Shell & Dashboard Styling
-    ├── custom-ui.js        # UI-Controller, Party-Hub, Chat, Persistence & Save-Engine
-    └── assets/             # Kompiliertes gebeh WASM & AudioWorklet
+```bash
+npm install
+npm start
 ```
+
+Der Server läuft anschließend auf **`http://localhost:8000`** (Docker) bzw. **`http://localhost:8080`** (Node.js).
+
+---
+
+## ⌨️ Steuerung (Game Boy & Turnier-Tetris)
+
+| Aktion | Tastatur (Primär) | Alternativ |
+| :--- | :--- | :--- |
+| **Links / Rechts / Soft-Drop** | `A` / `D` / `S` | Pfeiltasten `←` `→` `↓` |
+| **Drehen (A-Knopf)** | `W` / `J` | Pfeil hoch `↑` / `X` / `Z` |
+| **Hard-Drop / B-Knopf** | `Leertaste` (`Space`) | `K` / `B` |
+| **START / SELECT** | `Enter` / `Backspace` | Touch-Buttons am Gehäuse |

@@ -1,8 +1,8 @@
 {
-  "name": "gameboy-multiplayer",
-  "version": "1.0.0",
+  "name": "gameboy-tetris-tournament",
+  "version": "1.1.0",
   "type": "module",
-  "description": "Game Boy Online Multiplayer Relay and Web Host",
+  "description": "Game Boy Online Multiplayer & 8-Player Tetris Tournament Hub with Auto CPU Opponent Filling",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
